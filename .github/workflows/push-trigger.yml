@@ -9,7 +9,7 @@ on:
     branches:
       - '!release-branch'
       - MOSIP*
-      - 0.16.0-t
+      - 0.1.6.0-t
 
 jobs:
   build-dockers-inji-verify:
