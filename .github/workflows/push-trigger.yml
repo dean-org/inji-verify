@@ -8,10 +8,6 @@ on:
   push:
     branches:
       - '!release-branch'
-      - release*
-      - master
-      - 1.*
-      - develop
       - MOSIP*
       - 0.16.0-t
 
