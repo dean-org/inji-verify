@@ -119,6 +119,10 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
             }
 
             for (String sdJwtVpToken : sdJwtVpTokens) {
+                log.info("Starting SD-JWT verification: format={}, tokenLength={}", CredentialFormat.VC_SD_JWT, sdJwtVpToken.length());
+                if (log.isDebugEnabled()) {
+                    logSdJwtHeaderSummary(sdJwtVpToken);
+                }
                 addVerificationResults(sdJwtVpToken, verificationResults, CredentialFormat.VC_SD_JWT);
             }
 
@@ -137,17 +141,56 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
         }
     }
 
+    private void logSdJwtHeaderSummary(String sdJwt) {
+        try {
+            String issuerJwt = sdJwt.split("~")[0];
+            String[] parts = issuerJwt.split("\\.");
+            if (parts.length < 1) {
+                log.debug("SD-JWT header summary: unable to parse issuer JWT header");
+                return;
+            }
+
+            String headerJson = new String(Base64.getUrlDecoder().decode(parts[0]));
+            JSONObject header = new JSONObject(headerJson);
+
+            int x5cCount = 0;
+            Object x5c = header.opt("x5c");
+            if (x5c instanceof JSONArray arr) {
+                x5cCount = arr.length();
+            }
+
+            log.debug(
+                    "SD-JWT header summary: typ={}, alg={}, kidPresent={}, x5cPresent={}, x5cCount={}",
+                    header.optString("typ", null),
+                    header.optString("alg", null),
+                    header.has("kid"),
+                    header.has("x5c"),
+                    x5cCount
+            );
+        } catch (Exception e) {
+            log.warn("Failed to log SD-JWT header summary: {}", e.getMessage());
+        }
+    }
+
     private void addVerificationResults(String vc, List<VCResultDto> verificationResults, CredentialFormat credentialFormat) throws CredentialStatusCheckException {
         List<String> statusPurposeList = new ArrayList<>();
         statusPurposeList.add(Constants.STATUS_PURPOSE_REVOKED);
+        log.info("Invoking credential verification: format={}, payloadLength={}, statusPurposes={}",
+                credentialFormat, vc != null ? vc.length() : 0, statusPurposeList);
         CredentialVerificationSummary credentialVerificationSummary = credentialsVerifier.verifyAndGetCredentialStatus(vc, credentialFormat, statusPurposeList);
         VerificationResult verificationResult = credentialVerificationSummary.getVerificationResult();
+        log.info("Credential verification completed: format={}, verificationStatus={}, errorCode={}, message={}",
+                credentialFormat,
+                verificationResult != null ? verificationResult.getVerificationStatus() : null,
+                verificationResult != null ? verificationResult.getVerificationErrorCode() : null,
+                verificationResult != null ? verificationResult.getVerificationMessage() : null);
         if (!verificationResult.getVerificationStatus()) {
             log.error("VC Verification Failed");
             log.error("VC verification result errors : {} {}", verificationResult.getVerificationErrorCode(), verificationResult.getVerificationMessage());
         }
 
         VerificationStatus status = Utils.getVcVerificationStatus(credentialVerificationSummary);
+        log.info("Mapped VC verification status: {}", status);
         verificationResults.add(new VCResultDto(vc, status));
     }
 
