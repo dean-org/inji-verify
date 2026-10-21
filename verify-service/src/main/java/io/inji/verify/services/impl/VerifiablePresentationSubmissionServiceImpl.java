@@ -90,6 +90,18 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
 
                 if (isVerifiablePresentation) {
                     if (isVerifiablePresentationSigned) {
+                        JSONObject proof = vpToken.optJSONObject("proof");
+                        if (proof != null) {
+                            log.info(
+                                "VP proof metadata: type={}, cryptosuite={}, " +
+                                "proofPurpose={}, verificationMethod={}, jwsPresent={}",
+                                proof.optString("type", "not-present"),
+                                proof.optString("cryptosuite", "not-present"),
+                                proof.optString("proofPurpose", "not-present"),
+                                proof.optString("verificationMethod", "not-present"),
+                                proof.has("jws")
+                            );
+                        }
                         List<String> statusPurposeList = new ArrayList<>();
                         statusPurposeList.add(Constants.STATUS_PURPOSE_REVOKED);
                         PresentationResultWithCredentialStatus presentationResultWithCredentialStatus = presentationVerifier.verifyAndGetCredentialStatus(vpToken.toString(), statusPurposeList);
