@@ -99,6 +99,10 @@ public class TrustRegistryServiceImpl implements TrustRegistryService {
         }
 
         IssuerEntry entry = registry.get(info.issuer());
+        log.info("Trust registry enabled: {}", enabled);
+        log.info("Credential issuer: {}", info.issuer());
+        log.info("Credential types: {}", info.types());
+        log.info("Registry entry: {}", entry);
         if (entry == null) {
             return untrusted(info.issuer(), null, ERR_ISSUER_NOT_TRUSTED, "Issuer is not listed in the trust registry.");
         }
@@ -111,10 +115,30 @@ public class TrustRegistryServiceImpl implements TrustRegistryService {
             return untrusted(info.issuer(), entry.name(), ERR_ISSUER_INACTIVE, "Issuer is suspended, revoked or outside its validity period.");
         }
 
-        if (!entry.credentialTypes().isEmpty()
-                && info.types().stream().noneMatch(entry.credentialTypes()::contains)) {
-            return untrusted(info.issuer(), entry.name(), ERR_TYPE_NOT_ALLOWED, "Issuer is not authorised to issue this credential type.");
-        }
+        // if (!entry.credentialTypes().isEmpty()
+        //         && info.types().stream().noneMatch(entry.credentialTypes()::contains)) {
+        //     return untrusted(info.issuer(), entry.name(), ERR_TYPE_NOT_ALLOWED, "Issuer is not authorised to issue this credential type.");
+        // }
+        // Validate that the issuer is explicitly authorised for the credential type.
+            Set<String> credentialTypes = entry.credentialTypes();
+            
+            Set<String> actualTypes = new HashSet<>(info.types());
+            actualTypes.remove("VerifiableCredential");
+            
+            if (credentialTypes == null
+                    || credentialTypes.isEmpty()
+                    || Collections.disjoint(credentialTypes, actualTypes)) {
+            
+                log.warn("Credential type validation failed. Issuer={}, AllowedTypes={}, ActualTypes={}",
+                        info.issuer(), credentialTypes, actualTypes);
+            
+                return untrusted(
+                        info.issuer(),
+                        entry.name(),
+                        ERR_TYPE_NOT_ALLOWED,
+                        "Issuer is not authorised to issue this credential type."
+                );
+            }
 
         // The signature was verified against the key in verificationMethod. Make sure that key belongs to the
         // trusted issuer, otherwise anyone could claim a trusted "issuer" value but sign with their own DID.
@@ -143,6 +167,8 @@ public class TrustRegistryServiceImpl implements TrustRegistryService {
         }
         try {
             Map<String, IssuerEntry> loaded = parseRegistry(readRegistry());
+            log.info("Trust registry loaded from: {}", location);
+            log.info("Trust registry issuer entries: {}", loaded);
             cache.set(new CachedRegistry(loaded, Instant.now()));
             return loaded;
         } catch (Exception e) {
