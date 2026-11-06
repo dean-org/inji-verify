@@ -210,7 +210,7 @@ public class VerifiablePresentationSubmissionServiceImpl
                                     trustResult.getIssuer()
                             );
 
-                            vcStatus = VerificationStatus.FAILED;
+                            vcstatus = VerificationStatus.INVALID;
                         }
 
                         vcResults.add(
@@ -615,7 +615,7 @@ public class VerifiablePresentationSubmissionServiceImpl
                     trustResult.getIssuer()
             );
 
-            status = VerificationStatus.FAILED;
+            status = VerificationStatus.INVALID;
         }
 
         verificationResults.add(new VCResultDto(vc, status));
