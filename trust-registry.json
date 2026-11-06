@@ -5,7 +5,7 @@
             "name": "Technoforte Agriculture Department (Inji Certify)",
             "status": "active",
             "credentialTypes": [
-                "AgriculturalProducerCredential"
+                "AgriculturalProducerCredential1"
             ],
             "validFrom": "2026-01-01T00:00:00Z",
             "validUntil": null
