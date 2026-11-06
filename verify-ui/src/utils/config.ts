@@ -168,12 +168,14 @@ export const backgroundColorMapping: Record<VcStatus, string> ={
   EXPIRED: "bg-expired",
   INVALID: "bg-invalid",
   REVOKED: "bg-revoked",
+  UNTRUSTED_ISSUER: "bg-revoked",
 };
 export const textColorMapping: Record<VcStatus, string>  = {
   SUCCESS: "text-successText",
   EXPIRED: "text-expiredText",
   INVALID: "text-invalidText",
   REVOKED: "text-revokedText",
+  UNTRUSTED_ISSUER: "text-revokedText",
 };
 
 export const borderColorMapping: Record<VcStatus, string> = {
@@ -181,6 +183,7 @@ export const borderColorMapping: Record<VcStatus, string> = {
   EXPIRED: "border-expiredBorder",
   INVALID: "border-invalidBorder",
   REVOKED: "border-revokedBorder",
+  UNTRUSTED_ISSUER: "border-revokedBorder",
 };
 
 export const isMobileDevice = (): boolean => {

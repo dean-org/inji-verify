@@ -8,4 +8,10 @@ import lombok.Getter;
 @Getter
 public class VCVerificationStatusDto {
     VerificationStatus verificationStatus;
+    /** Null when the trust registry check is disabled or was not applicable. */
+    TrustRegistryCheckDto trustRegistryCheck;
+
+    public VCVerificationStatusDto(VerificationStatus verificationStatus) {
+        this(verificationStatus, null);
+    }
 }

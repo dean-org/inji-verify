@@ -7,12 +7,13 @@ const backgroundColorMapping: any = {
   EXPIRED: "bg-expiredText",
   INVALID: "bg-invalidText",
   REVOKED: "bg-revokedText",
+  UNTRUSTED_ISSUER: "bg-revokedText",
 };
 
 const ResultSummary = ({
   status,
 }: {
-  status: "SUCCESS" | "EXPIRED" | "INVALID" | "TIMEOUT" | "REVOKED";
+  status: "SUCCESS" | "EXPIRED" | "INVALID" | "TIMEOUT" | "REVOKED" | "UNTRUSTED_ISSUER";
 }) => {
   const bgColor = backgroundColorMapping[status];
   const { t } = useTranslation("ResultSummary");

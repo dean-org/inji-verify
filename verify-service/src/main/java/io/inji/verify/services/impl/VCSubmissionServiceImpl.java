@@ -3,7 +3,10 @@ package io.inji.verify.services.impl;
 import io.inji.verify.exception.CredentialStatusCheckException;
 import io.mosip.vercred.vcverifier.data.CredentialVerificationSummary;
 import io.mosip.vercred.vcverifier.data.VerificationStatus;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import io.inji.verify.dto.verification.TrustRegistryCheckDto;
+import io.inji.verify.services.TrustRegistryService;
 import io.inji.verify.dto.submission.VCSubmissionDto;
 import io.inji.verify.dto.submission.VCSubmissionResponseDto;
 import io.inji.verify.dto.submission.VCSubmissionVerificationStatusDto;
@@ -24,6 +27,9 @@ public class VCSubmissionServiceImpl implements VCSubmissionService {
 
     final VCSubmissionRepository vcSubmissionRepository;
     final CredentialsVerifier credentialsVerifier;
+
+    @Autowired(required = false)
+    private TrustRegistryService trustRegistryService;
 
     public VCSubmissionServiceImpl(VCSubmissionRepository vcSubmissionRepository, CredentialsVerifier credentialsVerifier) {
         this.vcSubmissionRepository = vcSubmissionRepository;
@@ -50,6 +56,12 @@ public class VCSubmissionServiceImpl implements VCSubmissionService {
             CredentialVerificationSummary credentialVerificationSummary = credentialsVerifier.verifyAndGetCredentialStatus(vc, credentialFormat, statusPurposeList);
             VerificationStatus vcVerificationStatus = Utils.getVcVerificationStatus(credentialVerificationSummary);
 
+            if (vcVerificationStatus == VerificationStatus.SUCCESS
+                    && trustRegistryService != null && trustRegistryService.isEnabled()) {
+                TrustRegistryCheckDto trustCheck = trustRegistryService.check(vc, credentialFormat);
+                return new VCSubmissionVerificationStatusDto(vc,
+                        trustCheck.isTrusted() ? vcVerificationStatus : VerificationStatus.INVALID, trustCheck);
+            }
             return new VCSubmissionVerificationStatusDto(vc, vcVerificationStatus);
         } else {
             return null;

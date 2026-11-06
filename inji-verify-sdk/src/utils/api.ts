@@ -38,6 +38,10 @@ export const vcVerification = async (credential: unknown, url: string) => {
     const response = await fetch(url + "/vc-verification", requestOptions);
     const data = await response.json();
     if (response.status !== 200) throw new Error(`Failed VC Verification due to: ${ data.error || "Unknown Error" }`);
+    // Credential is cryptographically fine but the issuer failed the trust registry check.
+    if (data.trustRegistryCheck && data.trustRegistryCheck.trusted === false) {
+      return "UNTRUSTED_ISSUER";
+    }
     return data.verificationStatus;
   } catch (error) {
     console.error(error);

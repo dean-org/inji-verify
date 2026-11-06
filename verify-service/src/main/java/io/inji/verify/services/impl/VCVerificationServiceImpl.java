@@ -6,6 +6,9 @@ import io.inji.verify.dto.verification.VCVerificationRequestDto;
 import io.inji.verify.dto.verification.VCVerificationResultDto;
 import io.inji.verify.dto.verification.ExpiryCheckDto;
 import io.inji.verify.dto.verification.StatusCheckDto;
+import io.inji.verify.dto.verification.TrustRegistryCheckDto;
+import io.inji.verify.services.TrustRegistryService;
+import org.springframework.beans.factory.annotation.Autowired;
 import io.inji.verify.exception.CredentialStatusCheckException;
 import io.inji.verify.services.VCVerificationService;
 import io.inji.verify.shared.Constants;
@@ -16,6 +19,7 @@ import io.mosip.vercred.vcverifier.constants.CredentialFormat;
 import io.mosip.vercred.vcverifier.data.CredentialStatusResult;
 import io.mosip.vercred.vcverifier.data.CredentialVerificationSummary;
 import io.mosip.vercred.vcverifier.data.VerificationResult;
+import io.mosip.vercred.vcverifier.data.VerificationStatus;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -37,6 +41,14 @@ public class VCVerificationServiceImpl implements VCVerificationService {
 
     private final CredentialsVerifier credentialsVerifier;
     private final PixelPass pixelPass;
+
+    // Optional so the service still works (check skipped) when no trust registry bean is wired.
+    @Autowired(required = false)
+    private TrustRegistryService trustRegistryService;
+
+    private boolean isTrustCheckEnabled() {
+        return trustRegistryService != null && trustRegistryService.isEnabled();
+    }
 
     public VCVerificationServiceImpl(CredentialsVerifier credentialsVerifier, PixelPass pixelPass) {
         this.credentialsVerifier = credentialsVerifier;
@@ -61,7 +73,15 @@ public class VCVerificationServiceImpl implements VCVerificationService {
         CredentialVerificationSummary credentialVerificationSummary =
                 credentialsVerifier.verifyAndGetCredentialStatus(vc, format, statusPurposeList);
         log.debug("CredentialVerificationResult: {}", credentialVerificationSummary.getVerificationResult());
-        return new VCVerificationStatusDto(Utils.getVcVerificationStatus(credentialVerificationSummary));
+        VerificationStatus status = Utils.getVcVerificationStatus(credentialVerificationSummary);
+
+        // Trust registry check runs only after the credential itself verified successfully.
+        if (status == VerificationStatus.SUCCESS && isTrustCheckEnabled()) {
+            TrustRegistryCheckDto trustCheck = trustRegistryService.check(vc, format);
+            // Untrusted issuer => INVALID, so clients that ignore trustRegistryCheck still fail safe.
+            return new VCVerificationStatusDto(trustCheck.isTrusted() ? status : VerificationStatus.INVALID, trustCheck);
+        }
+        return new VCVerificationStatusDto(status);
     }
 
     @Override
@@ -74,6 +94,7 @@ public class VCVerificationServiceImpl implements VCVerificationService {
         ExpiryCheckDto expiryCheck = null;
         List<StatusCheckDto> statusCheck = List.of();
         Map<String, Object> claims = Map.of();
+        TrustRegistryCheckDto trustRegistryCheck = null;
 
         boolean skipStatusChecks = request.isSkipStatusChecks();
             if (skipStatusChecks) {
@@ -90,11 +111,15 @@ public class VCVerificationServiceImpl implements VCVerificationService {
         if (schemaAndSignatureCheck.isValid()) {
             expiryCheck = populateExpiryCheck(verificationResult);
             statusCheck = (!skipStatusChecks) ? populateStatusCheckDtoList(credentialStatus) : List.of();
+            if (isTrustCheckEnabled()) {
+                trustRegistryCheck = trustRegistryService.check(verifiableCredential, format);
+            }
             claims = request.isIncludeClaims() ? extractClaims(verifiableCredential, format, claimsWithMetaData, pixelPass) : Map.of();
         }
 
-        boolean allChecksSuccessful = populateAllChecksSuccessful(schemaAndSignatureCheck, expiryCheck, statusCheck, null);
+        boolean allChecksSuccessful = populateAllChecksSuccessful(schemaAndSignatureCheck, expiryCheck, statusCheck, null)
+                && (trustRegistryCheck == null || trustRegistryCheck.isTrusted());
 
-        return new VCVerificationResultDto(allChecksSuccessful, schemaAndSignatureCheck, expiryCheck, statusCheck, claims);
+        return new VCVerificationResultDto(allChecksSuccessful, schemaAndSignatureCheck, expiryCheck, statusCheck, claims, trustRegistryCheck);
     }
 }

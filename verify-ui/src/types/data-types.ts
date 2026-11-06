@@ -6,7 +6,7 @@ export type QrScanResult = {
 
 export type QrReadStatus = "SUCCESS" | "NOT_READ" | "FAILED";
 
-export type VcStatus = "SUCCESS" | "INVALID" | "EXPIRED" | "REVOKED";
+export type VcStatus = "SUCCESS" | "INVALID" | "EXPIRED" | "REVOKED" | "UNTRUSTED_ISSUER";
 
 export type VerificationStep = {
   label: string;

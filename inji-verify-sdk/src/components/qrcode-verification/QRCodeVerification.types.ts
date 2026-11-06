@@ -107,7 +107,7 @@ interface VerificationResult {
 
 export type VerificationResults = VerificationResult[];
 
-export type VcStatus = "SUCCESS" | "INVALID" | "EXPIRED";
+export type VcStatus = "SUCCESS" | "INVALID" | "EXPIRED" | "UNTRUSTED_ISSUER";
 
 export type scanResult = { data: any; error: Error | null };
 
