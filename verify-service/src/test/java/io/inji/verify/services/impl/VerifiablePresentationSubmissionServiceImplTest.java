@@ -60,6 +60,9 @@ public class VerifiablePresentationSubmissionServiceImplTest {
     private CredentialsVerifier credentialsVerifier;
 
     @Mock
+    private TrustRegistryServiceImpl trustRegistryService;
+
+    @Mock
     private VCVerificationServiceImpl vcVerificationService;
 
     @InjectMocks
@@ -71,7 +74,18 @@ public class VerifiablePresentationSubmissionServiceImplTest {
     @BeforeEach
     public void setUp() {
         MockitoAnnotations.openMocks(this);
-        verifiablePresentationSubmissionService = new VerifiablePresentationSubmissionServiceImpl(vpSubmissionRepository, credentialsVerifier, presentationVerifier, verifiablePresentationRequestService, vcVerificationService, pixelPass);
+         when(trustRegistryService.isEnabled()).thenReturn(false);
+        verifiablePresentationSubmissionService =
+            new VerifiablePresentationSubmissionServiceImpl(
+                vpSubmissionRepository,
+                credentialsVerifier,
+                presentationVerifier,
+                verifiablePresentationRequestService,
+                vcVerificationService,
+                pixelPass,
+                trustRegistryService
+            );
+        // verifiablePresentationSubmissionService = new VerifiablePresentationSubmissionServiceImpl(vpSubmissionRepository, credentialsVerifier, presentationVerifier, verifiablePresentationRequestService, vcVerificationService, pixelPass);
     }
 
     @Test
