@@ -9,6 +9,7 @@ import io.inji.verify.dto.submission.VPTokenResultDto;
 import io.inji.verify.dto.verification.ExpiryCheckDto;
 import io.inji.verify.dto.verification.VCVerificationResultDto;
 import io.inji.verify.dto.verification.SchemaAndSignatureCheckDto;
+import io.inji.verify.dto.verification.TrustRegistryCheckDto;
 import io.inji.verify.dto.verification.VCVerificationRequestDto;
 import io.inji.verify.enums.KBJwtErrorCodes;
 import io.inji.verify.enums.VPResultStatus;
@@ -30,6 +31,7 @@ import org.json.JSONObject;
 import org.json.JSONTokener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+
 import java.util.List;
 import java.util.Map;
 import java.util.ArrayList;
@@ -41,7 +43,8 @@ import static io.inji.verify.utils.Utils.*;
 
 @Service
 @Slf4j
-public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePresentationSubmissionService {
+public class VerifiablePresentationSubmissionServiceImpl
+        implements VerifiablePresentationSubmissionService {
 
     @Value("${inji.verify.claims-with-meta-data}")
     List<String> claimsWithMetaData;
@@ -52,219 +55,591 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
     final VerifiablePresentationRequestServiceImpl verifiablePresentationRequestService;
     final VCVerificationServiceImpl vcVerificationService;
     final PixelPass pixelPass;
+    final TrustRegistryServiceImpl trustRegistryService;
 
-    public VerifiablePresentationSubmissionServiceImpl(VPSubmissionRepository vpSubmissionRepository, CredentialsVerifier credentialsVerifier, PresentationVerifier presentationVerifier, VerifiablePresentationRequestServiceImpl verifiablePresentationRequestService, VCVerificationServiceImpl vcVerificationService, PixelPass pixelPass) {
+    public VerifiablePresentationSubmissionServiceImpl(
+            VPSubmissionRepository vpSubmissionRepository,
+            CredentialsVerifier credentialsVerifier,
+            PresentationVerifier presentationVerifier,
+            VerifiablePresentationRequestServiceImpl verifiablePresentationRequestService,
+            VCVerificationServiceImpl vcVerificationService,
+            PixelPass pixelPass,
+            TrustRegistryServiceImpl trustRegistryService) {
+
         this.vpSubmissionRepository = vpSubmissionRepository;
         this.credentialsVerifier = credentialsVerifier;
         this.presentationVerifier = presentationVerifier;
         this.verifiablePresentationRequestService = verifiablePresentationRequestService;
         this.vcVerificationService = vcVerificationService;
         this.pixelPass = pixelPass;
+        this.trustRegistryService = trustRegistryService;
+    }
+
+    /**
+     * Checks whether the credential issuer is trusted.
+     */
+    private TrustRegistryCheckDto checkCredentialTrust(
+            String credential,
+            CredentialFormat credentialFormat) {
+
+        try {
+            TrustRegistryCheckDto trustResult =
+                    trustRegistryService.check(credential, credentialFormat);
+
+            log.info(
+                    "Trust registry check completed. Issuer={}, Trusted={}",
+                    trustResult.getIssuer(),
+                    trustResult.isTrusted()
+            );
+
+            return trustResult;
+
+        } catch (Exception e) {
+            log.error("Trust registry check failed unexpectedly", e);
+
+            return new TrustRegistryCheckDto(
+                    false,
+                    null,
+                    null,
+                    new ErrorDto(
+                            "TRUST_REGISTRY_CHECK_FAILED",
+                            "Unable to verify credential issuer against trust registry"
+                    )
+            );
+        }
     }
 
     @Override
     public void submit(VPSubmissionDto vpSubmissionDto) {
-        vpSubmissionRepository.save(new VPSubmission(vpSubmissionDto.getState(), vpSubmissionDto.getVpToken(), vpSubmissionDto.getPresentationSubmission(), vpSubmissionDto.getError(), vpSubmissionDto.getErrorDescription()));
-        verifiablePresentationRequestService.invokeVpRequestStatusListener(vpSubmissionDto.getState());
+        vpSubmissionRepository.save(
+                new VPSubmission(
+                        vpSubmissionDto.getState(),
+                        vpSubmissionDto.getVpToken(),
+                        vpSubmissionDto.getPresentationSubmission(),
+                        vpSubmissionDto.getError(),
+                        vpSubmissionDto.getErrorDescription()
+                )
+        );
+
+        verifiablePresentationRequestService
+                .invokeVpRequestStatusListener(vpSubmissionDto.getState());
     }
 
-    private VPTokenResultDto processSubmission(VPSubmission vpSubmission, String transactionId) throws VPSubmissionWalletError,  InvalidVpTokenException, CredentialStatusCheckException, VPWithoutProofException {
+    private VPTokenResultDto processSubmission(
+            VPSubmission vpSubmission,
+            String transactionId)
+            throws VPSubmissionWalletError,
+            InvalidVpTokenException,
+            CredentialStatusCheckException,
+            VPWithoutProofException {
+
         log.info("Processing VP submission");
 
         List<VCResultDto> verificationResults = new ArrayList<>();
         List<VPVerificationStatus> vpVerificationStatuses = new ArrayList<>();
 
         try {
-            AuthorizationRequestCreateResponse authRequest = verifiablePresentationRequestService.getLatestAuthorizationRequestFor(transactionId);
+            AuthorizationRequestCreateResponse authRequest =
+                    verifiablePresentationRequestService
+                            .getLatestAuthorizationRequestFor(transactionId);
 
             log.info("Processing VP token matching");
-            if (isVPTokenNotMatching(vpSubmission, authRequest)) throw new TokenMatchingFailedException();
+
+            if (isVPTokenNotMatching(vpSubmission, authRequest)) {
+                throw new TokenMatchingFailedException();
+            }
 
             VPTokenDto vpTokenDto = extractTokens(vpSubmission.getVpToken());
 
             log.info("Processing VP verification");
-            boolean acceptVPWithoutHolderProof = isAcceptVPWithoutHolderProof(authRequest);
+
+            boolean acceptVPWithoutHolderProof =
+                    isAcceptVPWithoutHolderProof(authRequest);
+
             for (JSONObject vpToken : vpTokenDto.getJsonVpTokens()) {
-                if (isInvalidVerifiablePresentation(vpToken)) throw new InvalidVpTokenException();
+
+                if (isInvalidVerifiablePresentation(vpToken)) {
+                    throw new InvalidVpTokenException();
+                }
+
                 boolean isSigned = isVerifiablePresentationSigned(vpToken);
 
                 if (isSigned) {
+
                     List<String> statusPurposeList = new ArrayList<>();
                     statusPurposeList.add(Constants.STATUS_PURPOSE_REVOKED);
-                    PresentationResultWithCredentialStatus presentationResultWithCredentialStatus = presentationVerifier.verifyAndGetCredentialStatus(vpToken.toString(), statusPurposeList);
-                    VPVerificationStatus proofVerificationStatus = presentationResultWithCredentialStatus.getProofVerificationStatus();
+
+                    PresentationResultWithCredentialStatus presentationResultWithCredentialStatus =
+                            presentationVerifier.verifyAndGetCredentialStatus(
+                                    vpToken.toString(),
+                                    statusPurposeList
+                            );
+
+                    VPVerificationStatus proofVerificationStatus =
+                            presentationResultWithCredentialStatus.getProofVerificationStatus();
+
                     vpVerificationStatuses.add(proofVerificationStatus);
 
-                    List<VCResultWithCredentialStatus> vcResultsWithStatus = presentationResultWithCredentialStatus.getVcResults();
-                    if (vcResultsWithStatus.isEmpty()) throw new InvalidVpTokenException();
+                    List<VCResultWithCredentialStatus> vcResultsWithStatus =
+                            presentationResultWithCredentialStatus.getVcResults();
+
+                    if (vcResultsWithStatus.isEmpty()) {
+                        throw new InvalidVpTokenException();
+                    }
+
                     List<VCResultDto> vcResults = new ArrayList<>();
+
                     for (var vcResult : vcResultsWithStatus) {
-                        VerificationStatus vcStatus = Utils.applyRevocationStatus(vcResult.getStatus(), vcResult.getCredentialStatus());
-                        vcResults.add(new VCResultDto(vcResult.getVc(), vcStatus));
+
+                        VerificationStatus vcStatus =
+                                Utils.applyRevocationStatus(
+                                        vcResult.getStatus(),
+                                        vcResult.getCredentialStatus()
+                                );
+
+                        // Trust-registry check for signed LDP credentials.
+                        TrustRegistryCheckDto trustResult =
+                                checkCredentialTrust(
+                                        vcResult.getVc(),
+                                        CredentialFormat.LDP_VC
+                                );
+
+                        if (!trustResult.isTrusted()) {
+                            log.warn(
+                                    "Credential rejected because issuer is not trusted. Issuer={}",
+                                    trustResult.getIssuer()
+                            );
+
+                            vcStatus = VerificationStatus.FAILED;
+                        }
+
+                        vcResults.add(
+                                new VCResultDto(vcResult.getVc(), vcStatus)
+                        );
                     }
+
                     verificationResults.addAll(vcResults);
+
                 } else if (acceptVPWithoutHolderProof) {
-                    Object verifiableCredential = vpToken.opt("verifiableCredential");
-                    List<Object> listOfVerifiableCredentials = getListOfVerifiableCredentials(verifiableCredential);
+
+                    Object verifiableCredential =
+                            vpToken.opt("verifiableCredential");
+
+                    List<Object> listOfVerifiableCredentials =
+                            getListOfVerifiableCredentials(verifiableCredential);
+
                     for (Object credential : listOfVerifiableCredentials) {
-                        addVerificationResults(credential.toString(), verificationResults, CredentialFormat.LDP_VC);
+                        addVerificationResults(
+                                credential.toString(),
+                                verificationResults,
+                                CredentialFormat.LDP_VC
+                        );
                     }
+
                 } else {
                     throw new VPWithoutProofException();
                 }
             }
 
             for (String sdJwtVpToken : vpTokenDto.getSdJwtVpTokens()) {
-                addVerificationResults(sdJwtVpToken, verificationResults, CredentialFormat.VC_SD_JWT);
+                addVerificationResults(
+                        sdJwtVpToken,
+                        verificationResults,
+                        CredentialFormat.VC_SD_JWT
+                );
             }
 
             log.info("VP submission processing done");
-            return new VPTokenResultDto(transactionId, getCombinedVerificationStatus(vpVerificationStatuses, verificationResults), verificationResults);
+
+            return new VPTokenResultDto(
+                    transactionId,
+                    getCombinedVerificationStatus(
+                            vpVerificationStatuses,
+                            verificationResults
+                    ),
+                    verificationResults
+            );
+
         } catch (VPSubmissionWalletError e) {
-            log.error("Received wallet error: {} - {}", e.getErrorCode(), e.getErrorDescription());
+            log.error(
+                    "Received wallet error: {} - {}",
+                    e.getErrorCode(),
+                    e.getErrorDescription()
+            );
             throw e;
+
         } catch (CredentialStatusCheckException e) {
-            log.error("Received Credential status check exception: {} - {}", e.getErrorCode(), e.getErrorDescription());
+            log.error(
+                    "Received Credential status check exception: {} - {}",
+                    e.getErrorCode(),
+                    e.getErrorDescription()
+            );
             throw e;
+
         } catch (VPWithoutProofException e) {
             log.error("Received Invalid VP: ", e);
             throw e;
+
         } catch (Exception e) {
             log.error("Failed to verify VP submission", e);
-            return new VPTokenResultDto(transactionId, VPResultStatus.FAILED, verificationResults);
+
+            return new VPTokenResultDto(
+                    transactionId,
+                    VPResultStatus.FAILED,
+                    verificationResults
+            );
         }
     }
 
-    private VPVerificationResultDto processSubmissionV2(VerificationRequestDto request, String transactionId, VPSubmission vpSubmission) {
+    private VPVerificationResultDto processSubmissionV2(
+            VerificationRequestDto request,
+            String transactionId,
+            VPSubmission vpSubmission) {
+
         log.info("Processing VP submission V2");
 
         List<CredentialResultsDto> credentialResults = new ArrayList<>();
 
-        AuthorizationRequestCreateResponse authRequest = verifiablePresentationRequestService.getLatestAuthorizationRequestFor(transactionId);
+        AuthorizationRequestCreateResponse authRequest =
+                verifiablePresentationRequestService
+                        .getLatestAuthorizationRequestFor(transactionId);
 
         log.info("Processing VP token matching V2");
-        if (isVPTokenNotMatching(vpSubmission, authRequest)) throw new TokenMatchingFailedException();
+
+        if (isVPTokenNotMatching(vpSubmission, authRequest)) {
+            throw new TokenMatchingFailedException();
+        }
 
         VPTokenDto vpTokenDto = extractTokens(vpSubmission.getVpToken());
 
         log.info("Processing VP verification V2");
-        boolean acceptVPWithoutHolderProof = isAcceptVPWithoutHolderProof(authRequest);
+
+        boolean acceptVPWithoutHolderProof =
+                isAcceptVPWithoutHolderProof(authRequest);
+
         for (JSONObject vpToken : vpTokenDto.getJsonVpTokens()) {
-            if (isInvalidVerifiablePresentation(vpToken)) throw new InvalidVpTokenException();
+
+            if (isInvalidVerifiablePresentation(vpToken)) {
+                throw new InvalidVpTokenException();
+            }
+
             boolean isSigned = isVerifiablePresentationSigned(vpToken);
 
             if (isSigned) {
+
                 if (request.isSkipStatusChecks()) {
                     verifyPresentation(request, vpToken, credentialResults);
                 } else {
-                    verifyPresentationWithCredentialStatusChecks(request, vpToken, credentialResults);
+                    verifyPresentationWithCredentialStatusChecks(
+                            request,
+                            vpToken,
+                            credentialResults
+                    );
                 }
+
             } else if (acceptVPWithoutHolderProof) {
-                // for a VPToken without proof, do verification for all credentials
-                Object verifiableCredential = vpToken.opt("verifiableCredential");
-                List<Object> listOfVerifiableCredentials = getListOfVerifiableCredentials(verifiableCredential);
+
+                Object verifiableCredential =
+                        vpToken.opt("verifiableCredential");
+
+                List<Object> listOfVerifiableCredentials =
+                        getListOfVerifiableCredentials(verifiableCredential);
+
                 for (Object credential : listOfVerifiableCredentials) {
-                    credentialResults.add(verifySingleCredential(request, credential, false));
+                    credentialResults.add(
+                            verifySingleCredential(request, credential, false)
+                    );
                 }
+
             } else {
                 throw new VPWithoutProofException();
             }
         }
 
         for (String sdJwtVpToken : vpTokenDto.getSdJwtVpTokens()) {
-            credentialResults.add(verifySingleCredential(request, sdJwtVpToken, true));
+            credentialResults.add(
+                    verifySingleCredential(request, sdJwtVpToken, true)
+            );
         }
 
-        boolean allChecksSuccessful = credentialResults.stream().allMatch(CredentialResultsDto::isAllChecksSuccessful);
+        boolean allChecksSuccessful =
+                credentialResults.stream()
+                        .allMatch(CredentialResultsDto::isAllChecksSuccessful);
 
         log.info("VP submission processing done V2");
-        return new VPVerificationResultDto(transactionId, allChecksSuccessful, credentialResults);
+
+        return new VPVerificationResultDto(
+                transactionId,
+                allChecksSuccessful,
+                credentialResults
+        );
     }
 
-    private List<Object> getListOfVerifiableCredentials(Object verifiableCredential) {
+    private List<Object> getListOfVerifiableCredentials(
+            Object verifiableCredential) {
+
         if (verifiableCredential instanceof JSONArray array) {
-            if (array.isEmpty()) throw new InvalidVpTokenException();
+
+            if (array.isEmpty()) {
+                throw new InvalidVpTokenException();
+            }
+
             List<Object> verifiableCredentialsList = new ArrayList<>();
-            for (Object credential : array)
+
+            for (Object credential : array) {
                 verifiableCredentialsList.add(credential);
+            }
+
             return verifiableCredentialsList;
         }
-        if (verifiableCredential instanceof JSONObject || verifiableCredential instanceof String) {
+
+        if (verifiableCredential instanceof JSONObject
+                || verifiableCredential instanceof String) {
             return List.of(verifiableCredential);
         }
+
         throw new InvalidVpTokenException();
     }
 
-    private void verifyPresentationWithCredentialStatusChecks(VerificationRequestDto request, JSONObject vpToken, List<CredentialResultsDto> credentialResults) {
+    private void verifyPresentationWithCredentialStatusChecks(
+            VerificationRequestDto request,
+            JSONObject vpToken,
+            List<CredentialResultsDto> credentialResults) {
+
         List<String> filters = request.getStatusCheckFilters();
-        PresentationResultWithCredentialStatusV2 result = presentationVerifier.verifyAndGetCredentialStatusV2(vpToken.toString(), filters);
-        List<VCResultWithCredentialStatusV2> vcResults = result.getVcResults();
-        if (vcResults.isEmpty()) throw new InvalidVpTokenException();
+
+        PresentationResultWithCredentialStatusV2 result =
+                presentationVerifier.verifyAndGetCredentialStatusV2(
+                        vpToken.toString(),
+                        filters
+                );
+
+        List<VCResultWithCredentialStatusV2> vcResults =
+                result.getVcResults();
+
+        if (vcResults.isEmpty()) {
+            throw new InvalidVpTokenException();
+        }
+
         for (VCResultWithCredentialStatusV2 vcResWithStatus : vcResults) {
-            CredentialResultsDto credentialResultsDto = new CredentialResultsDto();
-            credentialResultsDto.setVerifiableCredential(vcResWithStatus.getVc());
-            credentialResultsDto.setHolderProofCheck(populateHolderProofDto(result.getProofVerificationResult()));
-            credentialResultsDto.setSchemaAndSignatureCheck(populateSchemaAndSignature(vcResWithStatus.getVerificationResult()));
+
+            CredentialResultsDto credentialResultsDto =
+                    new CredentialResultsDto();
+
+            credentialResultsDto.setVerifiableCredential(
+                    vcResWithStatus.getVc()
+            );
+
+            credentialResultsDto.setHolderProofCheck(
+                    populateHolderProofDto(result.getProofVerificationResult())
+            );
+
+            credentialResultsDto.setSchemaAndSignatureCheck(
+                    populateSchemaAndSignature(
+                            vcResWithStatus.getVerificationResult()
+                    )
+            );
+
             ExpiryCheckDto expiryCheckDto =
-                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid()) ? populateExpiryCheck(vcResWithStatus.getVerificationResult()) : null;
+                    credentialResultsDto.getSchemaAndSignatureCheck().isValid()
+                            ? populateExpiryCheck(
+                                    vcResWithStatus.getVerificationResult()
+                            )
+                            : null;
+
             Map<String, Object> claims =
-                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid() && request.isIncludeClaims()) ? extractClaims(vcResWithStatus.getVc(), CredentialFormat.LDP_VC, claimsWithMetaData, pixelPass) : Map.of();
+                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid()
+                            && request.isIncludeClaims())
+                            ? extractClaims(
+                                    vcResWithStatus.getVc(),
+                                    CredentialFormat.LDP_VC,
+                                    claimsWithMetaData,
+                                    pixelPass
+                            )
+                            : Map.of();
+
             credentialResultsDto.setExpiryCheck(expiryCheckDto);
             credentialResultsDto.setClaims(claims);
-            credentialResultsDto.setStatusCheck(populateStatusCheckDtoList(vcResWithStatus.getCredentialStatus()));
-            boolean allChecksSuccessful = populateAllChecksSuccessful(credentialResultsDto.getSchemaAndSignatureCheck(), credentialResultsDto.getExpiryCheck(), credentialResultsDto.getStatusCheck(), credentialResultsDto.getHolderProofCheck());
-            credentialResultsDto.setAllChecksSuccessful(allChecksSuccessful);
+
+            credentialResultsDto.setStatusCheck(
+                    populateStatusCheckDtoList(
+                            vcResWithStatus.getCredentialStatus()
+                    )
+            );
+
+            // Trust-registry check for this LDP credential.
+            TrustRegistryCheckDto trustResult =
+                    checkCredentialTrust(
+                            vcResWithStatus.getVc(),
+                            CredentialFormat.LDP_VC
+                    );
+
+            credentialResultsDto.setTrustRegistryCheck(trustResult);
+
+            boolean allChecksSuccessful =
+                    populateAllChecksSuccessful(
+                            credentialResultsDto.getSchemaAndSignatureCheck(),
+                            credentialResultsDto.getExpiryCheck(),
+                            credentialResultsDto.getStatusCheck(),
+                            credentialResultsDto.getHolderProofCheck()
+                    );
+
+            credentialResultsDto.setAllChecksSuccessful(
+                    allChecksSuccessful && trustResult.isTrusted()
+            );
+
             credentialResults.add(credentialResultsDto);
         }
     }
 
-    private void verifyPresentation(VerificationRequestDto request, JSONObject vpToken, List<CredentialResultsDto> credentialResults) {
-        PresentationVerificationResultV2 result = presentationVerifier.verifyV2(vpToken.toString());
+    private void verifyPresentation(
+            VerificationRequestDto request,
+            JSONObject vpToken,
+            List<CredentialResultsDto> credentialResults) {
+
+        PresentationVerificationResultV2 result =
+                presentationVerifier.verifyV2(vpToken.toString());
+
         List<VCResultV2> vcResults = result.getVcResults();
-        if (vcResults.isEmpty()) throw new InvalidVpTokenException();
+
+        if (vcResults.isEmpty()) {
+            throw new InvalidVpTokenException();
+        }
+
         for (VCResultV2 vcRes : vcResults) {
-            CredentialResultsDto credentialResultsDto = new CredentialResultsDto();
+
+            CredentialResultsDto credentialResultsDto =
+                    new CredentialResultsDto();
+
             credentialResultsDto.setVerifiableCredential(vcRes.getVc());
-            credentialResultsDto.setHolderProofCheck(populateHolderProofDto(result.getProofVerificationResult()));
-            credentialResultsDto.setSchemaAndSignatureCheck(populateSchemaAndSignature(vcRes.getVerificationResult()));
+
+            credentialResultsDto.setHolderProofCheck(
+                    populateHolderProofDto(result.getProofVerificationResult())
+            );
+
+            credentialResultsDto.setSchemaAndSignatureCheck(
+                    populateSchemaAndSignature(
+                            vcRes.getVerificationResult()
+                    )
+            );
+
             ExpiryCheckDto expiryCheckDto =
-                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid()) ? populateExpiryCheck(vcRes.getVerificationResult()) : null;
+                    credentialResultsDto.getSchemaAndSignatureCheck().isValid()
+                            ? populateExpiryCheck(vcRes.getVerificationResult())
+                            : null;
+
             Map<String, Object> claims =
-                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid() && request.isIncludeClaims()) ? extractClaims(vcRes.getVc(), CredentialFormat.LDP_VC, claimsWithMetaData, pixelPass) : Map.of();
+                    (credentialResultsDto.getSchemaAndSignatureCheck().isValid()
+                            && request.isIncludeClaims())
+                            ? extractClaims(
+                                    vcRes.getVc(),
+                                    CredentialFormat.LDP_VC,
+                                    claimsWithMetaData,
+                                    pixelPass
+                            )
+                            : Map.of();
+
             credentialResultsDto.setExpiryCheck(expiryCheckDto);
             credentialResultsDto.setClaims(claims);
-            boolean allChecksSuccessful = populateAllChecksSuccessful(credentialResultsDto.getSchemaAndSignatureCheck(), credentialResultsDto.getExpiryCheck(), credentialResultsDto.getStatusCheck(), credentialResultsDto.getHolderProofCheck());
-            credentialResultsDto.setAllChecksSuccessful(allChecksSuccessful);
+
+            // Trust-registry check for this LDP credential.
+            TrustRegistryCheckDto trustResult =
+                    checkCredentialTrust(
+                            vcRes.getVc(),
+                            CredentialFormat.LDP_VC
+                    );
+
+            credentialResultsDto.setTrustRegistryCheck(trustResult);
+
+            boolean allChecksSuccessful =
+                    populateAllChecksSuccessful(
+                            credentialResultsDto.getSchemaAndSignatureCheck(),
+                            credentialResultsDto.getExpiryCheck(),
+                            credentialResultsDto.getStatusCheck(),
+                            credentialResultsDto.getHolderProofCheck()
+                    );
+
+            credentialResultsDto.setAllChecksSuccessful(
+                    allChecksSuccessful && trustResult.isTrusted()
+            );
+
             credentialResults.add(credentialResultsDto);
         }
     }
 
-    private boolean isAcceptVPWithoutHolderProof(AuthorizationRequestCreateResponse request) {
-        return Optional.ofNullable(request.getAuthorizationDetails()).map(AuthorizationRequestResponseDto::isAcceptVPWithoutHolderProof).orElse(false);
+    private boolean isAcceptVPWithoutHolderProof(
+            AuthorizationRequestCreateResponse request) {
+
+        return Optional.ofNullable(request.getAuthorizationDetails())
+                .map(AuthorizationRequestResponseDto::isAcceptVPWithoutHolderProof)
+                .orElse(false);
     }
 
-    private void addVerificationResults(String vc, List<VCResultDto> verificationResults, CredentialFormat credentialFormat) {
+    private void addVerificationResults(
+            String vc,
+            List<VCResultDto> verificationResults,
+            CredentialFormat credentialFormat) {
+
         List<String> statusPurposeList = new ArrayList<>();
         statusPurposeList.add(Constants.STATUS_PURPOSE_REVOKED);
-        CredentialVerificationSummary credentialVerificationSummary = credentialsVerifier.verifyAndGetCredentialStatus(vc, credentialFormat, statusPurposeList);
-        VerificationResult verificationResult = credentialVerificationSummary.getVerificationResult();
+
+        CredentialVerificationSummary credentialVerificationSummary =
+                credentialsVerifier.verifyAndGetCredentialStatus(
+                        vc,
+                        credentialFormat,
+                        statusPurposeList
+                );
+
+        VerificationResult verificationResult =
+                credentialVerificationSummary.getVerificationResult();
+
         if (!verificationResult.getVerificationStatus()) {
             log.error("VC Verification Failed");
-            log.error("VC verification result errors : {} {}", verificationResult.getVerificationErrorCode(), verificationResult.getVerificationMessage());
+            log.error(
+                    "VC verification result errors : {} {}",
+                    verificationResult.getVerificationErrorCode(),
+                    verificationResult.getVerificationMessage()
+            );
         }
-        VerificationStatus status = Utils.getVcVerificationStatus(credentialVerificationSummary);
+
+        VerificationStatus status =
+                Utils.getVcVerificationStatus(credentialVerificationSummary);
+
+        // Trust-registry check for unsigned VP credentials and SD-JWT V1.
+        TrustRegistryCheckDto trustResult =
+                checkCredentialTrust(vc, credentialFormat);
+
+        if (!trustResult.isTrusted()) {
+            log.warn(
+                    "Credential rejected because issuer is not trusted. Issuer={}",
+                    trustResult.getIssuer()
+            );
+
+            status = VerificationStatus.FAILED;
+        }
+
         verificationResults.add(new VCResultDto(vc, status));
     }
 
     private boolean isInvalidVerifiablePresentation(JSONObject vpToken) {
+
         Object types = vpToken.opt("type");
-        if (types == null) return true;
+
+        if (types == null) {
+            return true;
+        }
 
         return !switch (types) {
             case JSONArray jsonTypes -> jsonTypes.toList().stream()
-                    .anyMatch(type -> "VerifiablePresentation".equalsIgnoreCase(type.toString()));
+                    .anyMatch(type ->
+                            "VerifiablePresentation".equalsIgnoreCase(
+                                    type.toString()
+                            )
+                    );
+
             case String typeString ->
                     "VerifiablePresentation".equalsIgnoreCase(typeString);
+
             default -> false;
         };
     }
@@ -275,67 +650,138 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
     }
 
     public VPTokenDto extractTokens(String vpTokenString) {
-        if (vpTokenString == null) throw new InvalidVpTokenException();
+
+        if (vpTokenString == null) {
+            throw new InvalidVpTokenException();
+        }
+
         List<JSONObject> jsonVpTokens = new ArrayList<>();
         List<String> sdJwtVpTokens = new ArrayList<>();
 
         Object vpTokenRaw = new JSONTokener(vpTokenString).nextValue();
 
         if (vpTokenRaw instanceof JSONArray array) {
-            IntStream.range(0, array.length()).forEach(i -> processSingleToken(array.get(i), jsonVpTokens, sdJwtVpTokens));
+
+            IntStream.range(0, array.length())
+                    .forEach(i ->
+                            processSingleToken(
+                                    array.get(i),
+                                    jsonVpTokens,
+                                    sdJwtVpTokens
+                            )
+                    );
+
         } else {
-            processSingleToken(vpTokenRaw, jsonVpTokens, sdJwtVpTokens);
+            processSingleToken(
+                    vpTokenRaw,
+                    jsonVpTokens,
+                    sdJwtVpTokens
+            );
         }
 
-        log.debug("Number of VP tokens to verify: {}", jsonVpTokens.size() + ":" + sdJwtVpTokens.size());
+        log.debug(
+                "Number of VP tokens to verify: {}:{}",
+                jsonVpTokens.size(),
+                sdJwtVpTokens.size()
+        );
+
         if (jsonVpTokens.isEmpty() && sdJwtVpTokens.isEmpty()) {
             throw new InvalidVpTokenException();
         }
+
         return new VPTokenDto(jsonVpTokens, sdJwtVpTokens);
     }
 
-    private void processSingleToken(Object item, List<JSONObject> jsonVpTokens, List<String> sdJwtVpTokens) {
+    private void processSingleToken(
+            Object item,
+            List<JSONObject> jsonVpTokens,
+            List<String> sdJwtVpTokens) {
+
         switch (item) {
+
             case String itemString -> {
+
                 if (isSdJwt(itemString)) {
                     sdJwtVpTokens.add(itemString);
+
                 } else {
                     try {
-                        String decodedJson = new String(Base64.getUrlDecoder().decode(itemString));
-                        Object decodedRaw = new JSONTokener(decodedJson).nextValue();
+                        String decodedJson =
+                                new String(
+                                        Base64.getUrlDecoder().decode(itemString)
+                                );
+
+                        Object decodedRaw =
+                                new JSONTokener(decodedJson).nextValue();
 
                         if (decodedRaw instanceof JSONObject decodedObject) {
                             jsonVpTokens.add(decodedObject);
                         }
+
                     } catch (Exception e) {
-                        log.warn("Failed to decode or parse token string: {}", e.getMessage());
+                        log.warn(
+                                "Failed to decode or parse token string: {}",
+                                e.getMessage()
+                        );
                     }
                 }
             }
-            case JSONObject jsonObject -> jsonVpTokens.add(jsonObject);
+
+            case JSONObject jsonObject ->
+                    jsonVpTokens.add(jsonObject);
+
             case null, default -> {
             }
         }
-
     }
 
     @Override
-    public VPTokenResultDto getVPResult(List<String> requestIds, String transactionId) throws VPSubmissionWalletError,  InvalidVpTokenException, CredentialStatusCheckException, VPWithoutProofException, VPSubmissionNotFoundException {
-        VPSubmission vpSubmission = fetchVpSubmissionIfValid(requestIds);
+    public VPTokenResultDto getVPResult(
+            List<String> requestIds,
+            String transactionId)
+            throws VPSubmissionWalletError,
+            InvalidVpTokenException,
+            CredentialStatusCheckException,
+            VPWithoutProofException,
+            VPSubmissionNotFoundException {
+
+        VPSubmission vpSubmission =
+                fetchVpSubmissionIfValid(requestIds);
+
         return processSubmission(vpSubmission, transactionId);
     }
 
     @Override
-    public VPVerificationResultDto getVPResultV2(VerificationRequestDto request, List<String> requestIds, String transactionId) {
-        VPSubmission vpSubmission = fetchVpSubmissionIfValid(requestIds);
-        return processSubmissionV2(request, transactionId, vpSubmission);
+    public VPVerificationResultDto getVPResultV2(
+            VerificationRequestDto request,
+            List<String> requestIds,
+            String transactionId) {
+
+        VPSubmission vpSubmission =
+                fetchVpSubmissionIfValid(requestIds);
+
+        return processSubmissionV2(
+                request,
+                transactionId,
+                vpSubmission
+        );
     }
 
-    private boolean isVPTokenNotMatching(VPSubmission vpSubmission, AuthorizationRequestCreateResponse request) {
-        Object vpTokenRaw = new JSONTokener(vpSubmission.getVpToken()).nextValue();
-        List<DescriptorMapDto> descriptorMap = vpSubmission.getPresentationSubmission().getDescriptorMap();
+    private boolean isVPTokenNotMatching(
+            VPSubmission vpSubmission,
+            AuthorizationRequestCreateResponse request) {
 
-        if (vpTokenRaw == null || request == null || descriptorMap == null || descriptorMap.isEmpty()) {
+        Object vpTokenRaw =
+                new JSONTokener(vpSubmission.getVpToken()).nextValue();
+
+        List<DescriptorMapDto> descriptorMap =
+                vpSubmission.getPresentationSubmission().getDescriptorMap();
+
+        if (vpTokenRaw == null
+                || request == null
+                || descriptorMap == null
+                || descriptorMap.isEmpty()) {
+
             log.info("Unable to perform token matching");
             return true;
         }
@@ -344,46 +790,95 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
         return false;
     }
 
-    private VPResultStatus getCombinedVerificationStatus(List<VPVerificationStatus> vpVerificationStatuses, List<VCResultDto> verificationResults) {
+    private VPResultStatus getCombinedVerificationStatus(
+            List<VPVerificationStatus> vpVerificationStatuses,
+            List<VCResultDto> verificationResults) {
+
         boolean combinedVerificationStatus = true;
+
         for (VPVerificationStatus vpVerificationStatus : vpVerificationStatuses) {
-            combinedVerificationStatus = combinedVerificationStatus && (vpVerificationStatus == VPVerificationStatus.VALID);
+            combinedVerificationStatus =
+                    combinedVerificationStatus
+                            && (vpVerificationStatus == VPVerificationStatus.VALID);
         }
+
         for (VCResultDto verificationResult : verificationResults) {
-            combinedVerificationStatus = combinedVerificationStatus && (verificationResult.getVerificationStatus() == VerificationStatus.SUCCESS);
+            combinedVerificationStatus =
+                    combinedVerificationStatus
+                            && (verificationResult.getVerificationStatus()
+                            == VerificationStatus.SUCCESS);
         }
-        return combinedVerificationStatus ? VPResultStatus.SUCCESS : VPResultStatus.FAILED;
+
+        return combinedVerificationStatus
+                ? VPResultStatus.SUCCESS
+                : VPResultStatus.FAILED;
     }
 
-    private CredentialResultsDto verifySingleCredential(VerificationRequestDto request, Object vc, boolean isSdJwt) {
-        VCVerificationRequestDto vcVerificationRequestDto = new VCVerificationRequestDto(vc.toString());
-        vcVerificationRequestDto.setSkipStatusChecks(request.isSkipStatusChecks());
-        vcVerificationRequestDto.setStatusCheckFilters(request.getStatusCheckFilters());
-        vcVerificationRequestDto.setIncludeClaims(request.isIncludeClaims());
+    private CredentialResultsDto verifySingleCredential(
+            VerificationRequestDto request,
+            Object vc,
+            boolean isSdJwt) {
 
-        VCVerificationResultDto resultDto = vcVerificationService.verifyV2(vcVerificationRequestDto);
+        VCVerificationRequestDto vcVerificationRequestDto =
+                new VCVerificationRequestDto(vc.toString());
 
-        CredentialResultsDto credentialResults = new CredentialResultsDto();
+        vcVerificationRequestDto.setSkipStatusChecks(
+                request.isSkipStatusChecks()
+        );
+
+        vcVerificationRequestDto.setStatusCheckFilters(
+                request.getStatusCheckFilters()
+        );
+
+        vcVerificationRequestDto.setIncludeClaims(
+                request.isIncludeClaims()
+        );
+
+        // VCVerificationServiceImpl.verifyV2() handles the individual
+        // credential verification path, including its trust-registry check.
+        VCVerificationResultDto resultDto =
+                vcVerificationService.verifyV2(vcVerificationRequestDto);
+
+        CredentialResultsDto credentialResults =
+                new CredentialResultsDto();
+
         credentialResults.setVerifiableCredential(vc.toString());
-        credentialResults.setAllChecksSuccessful(resultDto.isAllChecksSuccessful());
-        credentialResults.setSchemaAndSignatureCheck(resultDto.getSchemaAndSignatureCheck());
+        credentialResults.setAllChecksSuccessful(
+                resultDto.isAllChecksSuccessful()
+        );
+        credentialResults.setSchemaAndSignatureCheck(
+                resultDto.getSchemaAndSignatureCheck()
+        );
         credentialResults.setExpiryCheck(resultDto.getExpiryCheck());
         credentialResults.setStatusCheck(resultDto.getStatusCheck());
         credentialResults.setClaims(resultDto.getClaims());
+
         if (isSdJwt) {
-            SchemaAndSignatureCheckDto schemaAndSignatureCheck = resultDto.getSchemaAndSignatureCheck();
+
+            SchemaAndSignatureCheckDto schemaAndSignatureCheck =
+                    resultDto.getSchemaAndSignatureCheck();
+
             if (schemaAndSignatureCheck.isValid()) {
-                credentialResults.setHolderProofCheck(new HolderProofCheckDto(true, null));
+                credentialResults.setHolderProofCheck(
+                        new HolderProofCheckDto(true, null)
+                );
+
             } else {
-                ErrorDto errorDto = schemaAndSignatureCheck.getError();
+                ErrorDto errorDto =
+                        schemaAndSignatureCheck.getError();
+
                 if (errorDto != null) {
                     for (KBJwtErrorCodes errorCode : KBJwtErrorCodes.values()) {
+
                         if (errorCode.name().equals(errorDto.getErrorCode())) {
-                            credentialResults.setHolderProofCheck(new HolderProofCheckDto(false, errorDto));
+                            credentialResults.setHolderProofCheck(
+                                    new HolderProofCheckDto(false, errorDto)
+                            );
                         }
                     }
                 }
             }
+
         } else {
             credentialResults.setHolderProofCheck(null);
         }
@@ -392,19 +887,38 @@ public class VerifiablePresentationSubmissionServiceImpl implements VerifiablePr
     }
 
     private VPSubmission fetchVpSubmissionIfValid(List<String> requestIds) {
-        VPSubmission submission = vpSubmissionRepository.findAllById(requestIds)
-                .stream()
-                .findFirst()
-                .orElseThrow(VPSubmissionNotFoundException::new);
 
-        if (submission.getError() != null && !submission.getError().isEmpty()) throw new VPSubmissionWalletError(submission.getError(), submission.getErrorDescription());
+        VPSubmission submission =
+                vpSubmissionRepository.findAllById(requestIds)
+                        .stream()
+                        .findFirst()
+                        .orElseThrow(VPSubmissionNotFoundException::new);
+
+        if (submission.getError() != null
+                && !submission.getError().isEmpty()) {
+
+            throw new VPSubmissionWalletError(
+                    submission.getError(),
+                    submission.getErrorDescription()
+            );
+        }
 
         return submission;
     }
 
-    private static HolderProofCheckDto populateHolderProofDto(VerificationResult verificationResult) {
-        boolean isValid = verificationResult.getVerificationStatus();
-        ErrorDto error = isValid ? null : new ErrorDto(verificationResult.getVerificationErrorCode(), verificationResult.getVerificationMessage());
+    private static HolderProofCheckDto populateHolderProofDto(
+            VerificationResult verificationResult) {
+
+        boolean isValid =
+                verificationResult.getVerificationStatus();
+
+        ErrorDto error =
+                isValid
+                        ? null
+                        : new ErrorDto(
+                                verificationResult.getVerificationErrorCode(),
+                                verificationResult.getVerificationMessage()
+                        );
 
         return new HolderProofCheckDto(isValid, error);
     }
