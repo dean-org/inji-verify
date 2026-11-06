@@ -1,0 +1,14 @@
+{
+    "issuers": [
+        {
+            "id": "did:web:technoforte.github.io:mosip-did",
+            "name": "Technoforte Agriculture Department (Inji Certify)",
+            "status": "active",
+            "credentialTypes": [
+                "AgriculturalProducerCredential"
+            ],
+            "validFrom": "2026-01-01T00:00:00Z",
+            "validUntil": null
+        }
+    ]
+}
