@@ -82,6 +82,11 @@ public class VerifiablePresentationSubmissionServiceImpl
             String credential,
             CredentialFormat credentialFormat) {
 
+        // Feature switch: when the trust registry is disabled every credential passes this step.
+        if (!trustRegistryService.isEnabled()) {
+            return new TrustRegistryCheckDto(true, null, null, null);
+        }
+
         try {
             TrustRegistryCheckDto trustResult =
                     trustRegistryService.check(credential, credentialFormat);

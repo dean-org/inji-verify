@@ -514,6 +514,14 @@ const QRCodeVerification: React.FC<QRCodeVerificationProps> = ({
     return atob(base64);
   }
 
+  // A VC shared by a wallet can be JSON (LDP), an SD-JWT string, or a raw CWT hex string.
+  // Only the JSON case may be parsed; hex/SD-JWT strings must be passed through as-is.
+  const parseSubmittedVc = (vc: any) => {
+    if (typeof vc !== "string") return vc;
+    if (isSdJwt(vc) || isCWT(vc)) return vc;
+    return JSON.parse(vc);
+  };
+
   const fetchVPResult = async (transactionId: string) => {
     if (hasFetchedVPResultRef.current) return;
     hasFetchedVPResultRef.current = true;
@@ -522,7 +530,7 @@ const QRCodeVerification: React.FC<QRCodeVerificationProps> = ({
         const vcResults = await vpResult(verifyServiceUrl, transactionId);
         if (vcResults && vcResults.length > 0) {
           const VCResult = vcResults.map((vcResult: any) => ({
-            vc: isSdJwt(vcResult.vc) ? vcResult.vc : JSON.parse(vcResult.vc),
+            vc: parseSubmittedVc(vcResult.vc),
             vcStatus: vcResult.verificationStatus as VcStatus,
           }));
           if (onVCReceived) {
