@@ -1,0 +1,20 @@
+    - name: INJI_VERIFY_TRUST_REGISTRY_ENABLED
+      value: 'true'
+    - name: INJI_VERIFY_TRUST_REGISTRY_MODE
+      value: api   # or file for json
+    - name: INJI_VERIFY_TRUST_REGISTRY_LOCATION
+      value: >-
+        https://Dharanidharan-S-04.github.io/mosipid-did/trust-registry.json
+    - name: INJI_VERIFY_TRUST_REGISTRY_CACHE_TTL_SECONDS
+      value: '300'
+    - name: INJI_VERIFY_TRUST_REGISTRY_FAIL_OPEN
+      value: 'false'
+    - name: INJI_VERIFY_TRUST_REGISTRY_API_BASE_URL
+      value: https://api-internal.mosip1.idencode.link/trust-registry
+    - name: INJI_VERIFY_TRUST_REGISTRY_API_USERNAME
+      value: admin
+    - name: INJI_VERIFY_TRUST_REGISTRY_API_PASSWORD
+      valueFrom:
+        secretKeyRef:
+          key: password
+          name: trust-registry-api
