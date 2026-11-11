@@ -4,7 +4,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.inji.verify.dto.verification.TrustRegistryCheckDto;
 import io.mosip.vercred.vcverifier.constants.CredentialFormat;
 import org.junit.jupiter.api.Test;
+import com.sun.net.httpserver.HttpServer;
 import org.springframework.core.io.DefaultResourceLoader;
+
+import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -65,5 +69,57 @@ class TrustRegistryServiceImplTest {
     void failOpenTrustsWhenRegistryUnavailable() {
         assertTrue(service("file:/does/not/exist.json", true)
                 .check(vc(ISSUER, "AgriculturalProducerCredential", ISSUER + "#key-1"), CredentialFormat.LDP_VC).isTrusted());
+    }
+
+    // ------------------------------------------------------------ api mode
+
+    private HttpServer startRegistryApi(int status, String body) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
+        server.createContext("/v1/authorizations/check", exchange -> {
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("Content-Type", "application/json");
+            exchange.sendResponseHeaders(status, bytes.length);
+            exchange.getResponseBody().write(bytes);
+            exchange.close();
+        });
+        server.start();
+        return server;
+    }
+
+    private TrustRegistryServiceImpl apiService(HttpServer server, boolean failOpen) {
+        return new TrustRegistryServiceImpl(true, "api", "", 300, failOpen,
+                "http://localhost:" + server.getAddress().getPort(), 5, "", "", "",
+                new DefaultResourceLoader(), new ObjectMapper());
+    }
+
+    @Test
+    void apiModeTrustsAuthorisedIssuer() throws Exception {
+        HttpServer server = startRegistryApi(200, "{\"authorised\":true}");
+        try {
+            assertTrue(apiService(server, false)
+                    .check(vc(ISSUER, "AgriculturalProducerCredential", ISSUER + "#key-1"), CredentialFormat.LDP_VC).isTrusted());
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void apiModeRejectsUnauthorisedIssuer() throws Exception {
+        HttpServer server = startRegistryApi(200, "{\"authorised\":false}");
+        try {
+            TrustRegistryCheckDto r = apiService(server, false)
+                    .check(vc(ISSUER, "AgriculturalProducerCredential", ISSUER + "#key-1"), CredentialFormat.LDP_VC);
+            assertFalse(r.isTrusted());
+            assertEquals("ISSUER_NOT_TRUSTED", r.getError().getErrorCode());
+        } finally { server.stop(0); }
+    }
+
+    @Test
+    void apiModeTreatsServerErrorAsUnavailableNotAsDecision() throws Exception {
+        HttpServer server = startRegistryApi(500, "{\"message\":\"boom\"}");
+        try {
+            TrustRegistryCheckDto r = apiService(server, false)
+                    .check(vc(ISSUER, "AgriculturalProducerCredential", ISSUER + "#key-1"), CredentialFormat.LDP_VC);
+            assertFalse(r.isTrusted());
+            assertEquals("TRUST_REGISTRY_UNAVAILABLE", r.getError().getErrorCode());
+        } finally { server.stop(0); }
     }
 }
