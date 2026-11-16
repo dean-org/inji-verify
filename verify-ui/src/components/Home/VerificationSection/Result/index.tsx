@@ -37,8 +37,16 @@ const Result = () => {
     }
   };
 
+  // Credential details are shown only for a fully valid credential. For expired, revoked,
+  // untrusted-issuer or invalid results nothing from the credential is decoded or displayed.
+  const showCredentialDetails = vcStatus === "SUCCESS";
+
   useEffect(() => {
     const fetchDecodedClaims = async () => {
+      if (!showCredentialDetails) {
+        setClaims(null);
+        return;
+      }
       if (isCWT(vc)) {
         try {
           const cwtHex =
@@ -75,7 +83,7 @@ const Result = () => {
       }
     };
     fetchDecodedClaims();
-  }, [dispatch, vc]);
+  }, [dispatch, vc, showCredentialDetails]);
 
   const clearTimer = () => {
     if (timerRef.current) {

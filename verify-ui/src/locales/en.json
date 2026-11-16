@@ -42,7 +42,7 @@
     "restartProcess": "Restart Process",
     "notShared": "Not Shared",
     "SUCCESS": "Valid",
-    "EXPIRED": "Valid But Expired",
+    "EXPIRED": "Expired",
     "INVALID": "Invalid",
     "REVOKED": "Revoked",
     "UNTRUSTED_ISSUER": "Untrusted Issuer",
@@ -115,9 +115,9 @@
   "ResultSummary": {
     "SUCCESS": "Congratulations, the given credential is valid!",
     "INVALID": "Unfortunately, the given credential is invalid!",
-    "EXPIRED": "The given credential is valid but expired!",
+    "EXPIRED": "The given credential is expired!",
     "REVOKED": "Unfortunately, the given credential is revoked!",
-    "UNTRUSTED_ISSUER": "The credential is genuine, but its issuer is not in the trust registry!",
+    "UNTRUSTED_ISSUER": "The given credential is not from a trusted issuer!",
     "TIMEOUT": "The scan session has expired due to inactivity. Please initiate a new scan."
   },
   "AlertMessages": {
