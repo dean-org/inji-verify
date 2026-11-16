@@ -118,7 +118,7 @@ docker rm inji-verify-service-dev
 
 This section helps to quickly get started with a demo of the Inji Verify application
 
-Once the repository is cloned, move into the inji-verify repository directory.
+Once the repository is cloned, move into the inji-verify repository directory.a
 
 ```shell
 cd ./inji-verify # repository folder
