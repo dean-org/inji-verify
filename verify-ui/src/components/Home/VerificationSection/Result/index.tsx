@@ -37,16 +37,22 @@ const Result = () => {
     }
   };
 
-  // Credential details are shown only for a fully valid credential. For expired, revoked,
-  // untrusted-issuer or invalid results nothing from the credential is decoded or displayed.
+  // Credential details are shown only for a fully valid credential.
   const showCredentialDetails = vcStatus === "SUCCESS";
 
   useEffect(() => {
+    // Clear data from any previous verification before handling this result.
+    setClaims(null);
+    setCredentialType("");
+    setModalOpen(false);
+
+    if (!showCredentialDetails || !vc) {
+      return;
+    }
+
+    let cancelled = false;
+
     const fetchDecodedClaims = async () => {
-      if (!showCredentialDetails) {
-        setClaims(null);
-        return;
-      }
       if (isCWT(vc)) {
         try {
           const cwtHex =
@@ -55,26 +61,33 @@ const Result = () => {
               : vc instanceof ArrayBuffer
                 ? uint8ArrayToHex(new Uint8Array(vc))
                 : (vc as string);
-          const claims = extractMappedClaim(cwtHex, 169);
-          setClaims(claims as LdpVc);
-
+          const decodedClaims = extractMappedClaim(cwtHex, 169);
+          if (!cancelled) {
+            setClaims(decodedClaims as LdpVc);
+          }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          dispatch(raiseAlert({ message, type: "error" }));
-
+          if (!cancelled) {
+            const message = err instanceof Error ? err.message : String(err);
+            dispatch(raiseAlert({ message, type: "error" }));
+          }
         }
       } else if (typeof vc === "string") {
         try {
-          const claims = await decodeSdJwtToken(vc);
-          setClaims(claims as SdJwtVc);
-          setCredentialType(claims.regularClaims.vct);
+          const decodedClaims = await decodeSdJwtToken(vc);
+          if (!cancelled) {
+            setClaims(decodedClaims as SdJwtVc);
+            setCredentialType(decodedClaims.regularClaims.vct);
+          }
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          dispatch(raiseAlert({ message, type: "error" }));
+          if (!cancelled) {
+            const message = err instanceof Error ? err.message : String(err);
+            dispatch(raiseAlert({ message, type: "error" }));
+          }
         }
       } else {
-        setClaims(vc as LdpVc);
-        const typeEntry = vc.type[1];
+        const credential = vc as LdpVc;
+        const typeEntry = credential.type[1];
+        setClaims(credential);
         if (typeof typeEntry === "string") {
           setCredentialType(typeEntry);
         } else if (typeof typeEntry === "object" && "_value" in typeEntry) {
@@ -82,7 +95,12 @@ const Result = () => {
         }
       }
     };
+
     fetchDecodedClaims();
+
+    return () => {
+      cancelled = true;
+    };
   }, [dispatch, vc, showCredentialDetails]);
 
   const clearTimer = () => {
@@ -108,7 +126,7 @@ const Result = () => {
       </div>
       <div>
         <div className={`h-[3px] border-b-2 border-b-transparent`} />
-        {claims && (
+        {showCredentialDetails && claims && (
           <DisplayVcDetailView
             vc={claims}
             onExpand={() => setModalOpen(true)}
@@ -123,7 +141,7 @@ const Result = () => {
           />
         </div>
       </div>
-      {claims && (
+      {showCredentialDetails && claims && (
         <DisplayVcDetailsModal
           isOpen={isModalOpen}
           onClose={() => setModalOpen(false)}
